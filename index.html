@@ -215,6 +215,21 @@ body::before{
 .starmap-legend .lg{display:flex;align-items:center;gap:8px}
 .starmap-legend .sw{width:10px;height:10px;border-radius:50%;flex-shrink:0}
 
+/* 星图「下一个高频词」浮动按钮 */
+.star-next{
+  position:absolute;left:14px;bottom:14px;
+  width:64px;height:64px;border-radius:50%;
+  background:linear-gradient(135deg,rgba(139,92,246,.92),rgba(45,212,191,.85));
+  border:none;color:#fff;cursor:pointer;z-index:5;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  font-weight:700;text-align:center;line-height:1.3;
+  box-shadow:0 6px 20px rgba(139,92,246,.45);
+  transition:transform .15s;
+  -webkit-tap-highlight-color:transparent;
+  user-select:none;
+}
+.star-next:active{transform:scale(.92)}
+
 /* 词根星系 */
 .root-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
 .root-card{
@@ -435,66 +450,37 @@ function freqLevel(w){
   return 1;
 }
 
-/* ================= 发音（有道单词 + 百度整句） ================= */
+/* ================= 发音（有道单词 + 本地例句音频） ================= */
 // 有道发音 URL（type=2 美音，单词用，手机端已验证稳定）
 function _youdaoUrl(text){
   const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
   return 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(clean) + '&type=2';
 }
-// 稳健播放：新建 Audio，等 canplay 再 play，失败静默降级
+// 稳健播放：play() 在用户点击的同步栈中调用（iOS 要求），失败由 error 事件兜底
 function _playAudio(url, rate, onFail){
   const a = new Audio();
   a.preload = 'auto';
   a.playbackRate = rate || 1;
-  let played = false;
-  a.addEventListener('canplaythrough', ()=>{ try{ a.play(); played=true; }catch(e){} });
-  a.addEventListener('loadeddata', ()=>{ if(!played){ try{ a.play(); played=true; }catch(e){} } });
-  a.addEventListener('error', ()=>{ if(!played && onFail) onFail(); });
+  a.addEventListener('error', ()=>{ if(onFail) onFail(); });
   a.src = url;
   a.load();
-  // 兜底：300ms 后若还没播放，直接尝试 play
-  setTimeout(()=>{ if(!played){ a.play().catch(()=>{ if(onFail) onFail(); }); } }, 300);
+  a.play().catch(()=>{});
 }
 // 播放单词发音
 function speakWord(word){
   _playAudio(_youdaoUrl(word), 1, ()=>{ toast('发音失败，请检查网络'); });
 }
-// 例句发音：主用百度整句（流畅），失败降级有道逐词
-function speakExample(e){
-  if(!e) return;
-  let en = e;
-  const idx = e.search(/[\u4e00-\u9fa5]/);
-  if(idx > 0) en = e.slice(0, idx);
-  en = en.replace(/\s*\/\/.*$/,'').trim();
-  en = en.replace(/[\[\]\/ˈˌː]/g,'').trim();
-  if(!en) return;
-  const baiduUrl = 'https://fanyi.baidu.com/gettts?lan=en&text=' + encodeURIComponent(en) + '&spd=3&source=web';
-  _playAudio(baiduUrl, 1, ()=>{
-    // 百度失败 → 降级有道逐词
-    speakExampleByYoudao(en);
-  });
-}
-// 有道逐词兜底（每个词单独请求有道）
-function speakExampleByYoudao(en){
-  const words = en.match(/[A-Za-z][A-Za-z'\-]*/g);
-  if(!words || !words.length) return;
-  let i = 0;
-  function next(){
-    if(i >= words.length) return;
-    const a = new Audio();
-    a.preload = 'auto';
-    a.src = _youdaoUrl(words[i]);
-    i++;
-    a.onended = next;
-    a.onerror = next;
-    a.play().catch(next);
-  }
-  next();
-}
-// 根据单词 id 播放例句
+// 例句发音：播放同源静态音频（预生成，稳定可靠）
 function speakExampleById(word){
   const w = WORDS.find(x=>x.w===word);
-  if(w && w.e) speakExample(w.e);
+  if(!w || !w.e) return;
+  if(!w.ak){
+    toast('这个词没有例句音频');
+    return;
+  }
+  _playAudio('audio/' + w.ak + '.mp3', 1, ()=>{
+    toast('例句音频加载失败');
+  });
 }
 
 /* ================= 星空背景 ================= */
@@ -779,12 +765,9 @@ function isMobile(){
   return window.innerWidth <= 768;
 }
 function renderStars(c){
-  if(isMobile()){
-    renderStarsMobile(c);
-    return;
-  }
+  const tip = isMobile() ? '点星星学词 · 单指拖动 · 双指缩放' : '点击星星查看单词 · 拖拽平移 · 滚轮缩放';
   c.innerHTML = `
-    <div class="section-title"><span class="dot"></span> 词频星空 <span style="font-weight:400;font-size:12px;color:var(--txt3)">点击星星查看单词 · 拖拽平移 · 滚轮缩放</span></div>
+    <div class="section-title"><span class="dot"></span> 词频星空 <span style="font-weight:400;font-size:12px;color:var(--txt3)">${tip}</span></div>
     <div class="starmap-wrap">
       <canvas id="starmap"></canvas>
       <div class="starmap-legend">
@@ -794,37 +777,25 @@ function renderStars(c){
         <div class="lg"><span class="sw" style="background:var(--pink)"></span> 生疏</div>
         <div class="lg"><span class="sw" style="background:var(--purple)"></span> 未标记</div>
       </div>
+      <div class="star-next" id="starNext" onclick="starNextWord()">
+        <span style="font-size:22px;line-height:1">→</span>
+        <span style="font-size:11px">下一个<br>高频词</span>
+      </div>
     </div>
   `;
   initStarmap();
 }
-// 手机端：高频词卡片流（按词频降序，未掌握优先，可直接点、可发音、带进度）
-function renderStarsMobile(c){
-  const hasFreq = WORDS.filter(w=>w.f).sort((a,b)=>(b.f||0)-(a.f||0));
-  // 未掌握的排前面
-  const unlearned = hasFreq.filter(w=>!progress[w.w]);
-  const learned = hasFreq.filter(w=>progress[w.w]);
-  const list = unlearned.concat(learned);
-  browseList = list;
-  c.innerHTML = `
-    <div class="section-title"><span class="dot"></span> 高频核心词 <span style="font-weight:400;font-size:12px;color:var(--txt3)">按考频从高到低 · 未掌握优先</span></div>
-    <div class="freq-list">
-      ${list.map((w,i)=>{
-        const st = progress[w.w];
-        const dot = st==='know'?'<span class="fdot know">✓</span>':st==='fuzzy'?'<span class="fdot fuzzy">?</span>':st==='unknown'?'<span class="fdot unknown">✗</span>':'<span class="fdot"></span>';
-        return `<div class="freq-item" onclick="openWord('${w.w}')">
-          <span class="frank">${i+1}</span>
-          <div class="fword">
-            <span class="fw">${w.w}</span>
-            <span class="fp">${w.p?'/'+w.p+'/':''}</span>
-          </div>
-          <span class="freq">⚡${w.f}</span>
-          <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}')">🔊</span>
-          ${dot}
-        </div>`;
-      }).join('')}
-    </div>
-  `;
+// 「下一个高频词」按钮：跳到下一个未掌握的高频词
+let starWordList = [];
+function starNextWord(){
+  if(!starWordList.length) return;
+  // 找第一个未掌握的；全掌握了就从头轮
+  let target = starWordList.find(w=>!progress[w.w] || progress[w.w]==='unknown');
+  if(!target) target = starWordList.find(w=>progress[w.w]==='fuzzy');
+  if(!target) target = starWordList[0];
+  openWord(target.w, starWordList);
+  // 打开后自动发音
+  setTimeout(()=>{ speakWord(target.w); }, 350);
 }
 
 function initStarmap(){
@@ -857,25 +828,46 @@ function initStarmap(){
     positions.push({x,y});
   });
 
-  let scale=1, ox=0, oy=0;
+  // 手机端初始放大：聚焦中心的高频核心词群
+  let scale = isMobile() ? 1.8 : 1;
+  let ox=0, oy=0;
   let dragging=false, sx=0, sy=0, sox=0, soy=0;
   let hovered=null;
 
+  // 供「下一个高频词」按钮使用（按词频排序）
+  starWordList = nodes.map(n=>n.w);
+
+  // 屏幕坐标 → 星图坐标
+  function toMap(cx_, cy_){
+    const r=canvas.getBoundingClientRect();
+    return { x:(cx_-r.left)/scale-ox/scale, y:(cy_-r.top)/scale-oy/scale };
+  }
+  function hitTest(mx,my,rad){
+    for(let i=0;i<nodes.length;i++){
+      const p=positions[i];
+      const dx=mx-p.x, dy=my-p.y;
+      if(dx*dx+dy*dy < rad) return nodes[i];
+    }
+    return null;
+  }
+  // 以 (mx,my) 为锚点缩放
+  function zoomAt(mx,my,f){
+    const newScale=Math.max(0.5,Math.min(6,scale*f));
+    ox = mx-(mx-ox)*(newScale/scale);
+    oy = my-(my-oy)*(newScale/scale);
+    scale=newScale;
+    draw();
+  }
+
+  // ===== 鼠标事件（桌面） =====
   canvas.addEventListener('mousedown', e=>{
     dragging=true; sx=e.clientX; sy=e.clientY; sox=ox; soy=oy;
   });
   window.addEventListener('mousemove', e=>{
     if(dragging){ ox=sox+(e.clientX-sx); oy=soy+(e.clientY-sy); draw(); }
     else{
-      const r=canvas.getBoundingClientRect();
-      const mx=(e.clientX-r.left)/scale-ox/scale;
-      const my=(e.clientY-r.top)/scale-oy/scale;
-      let found=null;
-      for(let i=0;i<nodes.length;i++){
-        const p=positions[i];
-        const dx=mx-p.x, dy=my-p.y;
-        if(dx*dx+dy*dy < 120){ found=nodes[i]; break; }
-      }
+      const m = toMap(e.clientX, e.clientY);
+      const found = hitTest(m.x, m.y, 120);
       if(found!==hovered){ hovered=found; canvas.style.cursor=found?'pointer':'grab'; draw(); }
     }
   });
@@ -883,25 +875,64 @@ function initStarmap(){
   canvas.addEventListener('wheel', e=>{
     e.preventDefault();
     const r=canvas.getBoundingClientRect();
-    const mx=e.clientX-r.left, my=e.clientY-r.top;
-    const f=e.deltaY<0?1.1:0.9;
-    const newScale=Math.max(0.5,Math.min(6,scale*f));
-    ox = mx-(mx-ox)*(newScale/scale);
-    oy = my-(my-oy)*(newScale/scale);
-    scale=newScale;
-    draw();
+    zoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY<0?1.1:0.9);
   },{passive:false});
   canvas.addEventListener('click', e=>{
-    if(dragging) return;
-    const r=canvas.getBoundingClientRect();
-    const mx=(e.clientX-r.left)/scale-ox/scale;
-    const my=(e.clientY-r.top)/scale-oy/scale;
-    for(let i=0;i<nodes.length;i++){
-      const p=positions[i];
-      const dx=mx-p.x, dy=my-p.y;
-      if(dx*dx+dy*dy < 140){ openWord(nodes[i].w.w, nodes.map(n=>n.w)); return; }
-    }
+    const m = toMap(e.clientX, e.clientY);
+    const hit = hitTest(m.x, m.y, 140);
+    if(hit){ openWord(hit.w.w, starWordList); speakWord(hit.w.w); }
   });
+
+  // ===== 触屏事件（手机） =====
+  let touchMode = 0;       // 0无 1单指拖 2双指缩
+  let tStart = null, pinchStart = null;
+  canvas.addEventListener('touchstart', e=>{
+    if(e.touches.length===1){
+      const t = e.touches[0];
+      touchMode = 1;
+      tStart = {x:t.clientX, y:t.clientY, ox, oy, t:Date.now()};
+    }else if(e.touches.length===2){
+      touchMode = 2;
+      const [a,b] = e.touches;
+      pinchStart = {
+        dist: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY),
+        scale
+      };
+    }
+  },{passive:true});
+  canvas.addEventListener('touchmove', e=>{
+    e.preventDefault();
+    if(touchMode===1 && e.touches.length===1){
+      const t = e.touches[0];
+      ox = tStart.ox + (t.clientX - tStart.x);
+      oy = tStart.oy + (t.clientY - tStart.y);
+      draw();
+    }else if(touchMode===2 && e.touches.length===2){
+      const [a,b] = e.touches;
+      const dist = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+      const f = dist / pinchStart.dist;
+      const r = canvas.getBoundingClientRect();
+      const cxm = (a.clientX+b.clientX)/2 - r.left;
+      const cym = (a.clientY+b.clientY)/2 - r.top;
+      scale = pinchStart.scale;
+      ox = 0; oy = 0;
+      // 从基准重算，锚点为双指中点
+      zoomAt(cxm, cym, f);
+    }
+  },{passive:false});
+  canvas.addEventListener('touchend', e=>{
+    // 单指快速点按（非拖动）→ 点星星
+    if(touchMode===1 && tStart){
+      const dt = Date.now() - tStart.t;
+      const dist = Math.hypot(e.changedTouches[0].clientX - tStart.x, e.changedTouches[0].clientY - tStart.y);
+      if(dt < 300 && dist < 12){
+        const m = toMap(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+        const hit = hitTest(m.x, m.y, 220);
+        if(hit){ openWord(hit.w.w, starWordList); speakWord(hit.w.w); }
+      }
+    }
+    if(e.touches.length===0){ touchMode = 0; tStart=null; pinchStart=null; }
+  },{passive:true});
 
   function draw(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
