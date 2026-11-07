@@ -176,6 +176,23 @@ body::before{
 .spk.small{width:22px;height:22px;font-size:11px}
 .spk-row{display:flex;align-items:center;gap:8px}
 
+/* 手机端高频词列表 */
+.freq-list{display:flex;flex-direction:column;gap:8px}
+.freq-item{
+  display:flex;align-items:center;gap:12px;padding:12px 14px;
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  cursor:pointer;transition:all .15s;
+}
+.freq-item:active{border-color:var(--purple);transform:scale(.99)}
+.frank{width:22px;text-align:center;font-size:12px;color:var(--txt3);flex-shrink:0}
+.fword{flex:1;display:flex;align-items:baseline;gap:8px;min-width:0}
+.fw{font-size:17px;font-weight:700;letter-spacing:.3px}
+.fp{font-size:11px;color:var(--teal);white-space:nowrap}
+.fdot{width:20px;height:20px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;color:var(--txt3)}
+.fdot.know{background:rgba(74,222,128,.2);border-color:var(--green);color:var(--green)}
+.fdot.fuzzy{background:rgba(251,191,36,.2);border-color:var(--amber);color:var(--amber)}
+.fdot.unknown{background:rgba(248,113,113,.2);border-color:var(--red);color:var(--red)}
+
 /* 抽屉翻页导航 */
 .drawer-nav{
   display:flex;gap:10px;align-items:center;justify-content:center;
@@ -418,53 +435,61 @@ function freqLevel(w){
   return 1;
 }
 
-/* ================= 发音（有道真人美音） ================= */
-let _audioEl = null;
-function _getAudio(){
-  if(!_audioEl){
-    _audioEl = new Audio();
-    _audioEl.preload = 'auto';
-  }
-  return _audioEl;
-}
-// 有道发音 URL（type=2 美音）
+/* ================= 发音（有道单词 + 百度整句） ================= */
+// 有道发音 URL（type=2 美音，单词用，手机端已验证稳定）
 function _youdaoUrl(text){
   const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
   return 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(clean) + '&type=2';
 }
-// 播放单个音频（单词用）
-function playYoudao(text, rate){
-  if(!text) return;
-  const url = _youdaoUrl(text);
-  const a = _getAudio();
-  a.src = url;
+// 稳健播放：新建 Audio，等 canplay 再 play，失败静默降级
+function _playAudio(url, rate, onFail){
+  const a = new Audio();
+  a.preload = 'auto';
   a.playbackRate = rate || 1;
-  a.play().catch(()=>{
-    toast('发音加载失败，请检查网络');
-  });
+  let played = false;
+  a.addEventListener('canplaythrough', ()=>{ try{ a.play(); played=true; }catch(e){} });
+  a.addEventListener('loadeddata', ()=>{ if(!played){ try{ a.play(); played=true; }catch(e){} } });
+  a.addEventListener('error', ()=>{ if(!played && onFail) onFail(); });
+  a.src = url;
+  a.load();
+  // 兜底：300ms 后若还没播放，直接尝试 play
+  setTimeout(()=>{ if(!played){ a.play().catch(()=>{ if(onFail) onFail(); }); } }, 300);
 }
 // 播放单词发音
 function speakWord(word){
-  playYoudao(word, 1);
+  _playAudio(_youdaoUrl(word), 1, ()=>{ toast('发音失败，请检查网络'); });
 }
-// 例句发音：用百度翻译 TTS（流畅整句，国内可访问）
+// 例句发音：主用百度整句（流畅），失败降级有道逐词
 function speakExample(e){
   if(!e) return;
-  // 提取英文部分（去掉中文翻译和 // 分隔的多句）
   let en = e;
   const idx = e.search(/[\u4e00-\u9fa5]/);
   if(idx > 0) en = e.slice(0, idx);
   en = en.replace(/\s*\/\/.*$/,'').trim();
-  // 去掉音标符号，保留正常标点
   en = en.replace(/[\[\]\/ˈˌː]/g,'').trim();
   if(!en) return;
-  const url = 'https://fanyi.baidu.com/gettts?lan=en&text=' + encodeURIComponent(en) + '&spd=3&source=web';
-  const a = _getAudio();
-  a.src = url;
-  a.playbackRate = 1;
-  a.play().catch(()=>{
-    toast('例句发音加载失败，请检查网络');
+  const baiduUrl = 'https://fanyi.baidu.com/gettts?lan=en&text=' + encodeURIComponent(en) + '&spd=3&source=web';
+  _playAudio(baiduUrl, 1, ()=>{
+    // 百度失败 → 降级有道逐词
+    speakExampleByYoudao(en);
   });
+}
+// 有道逐词兜底（每个词单独请求有道）
+function speakExampleByYoudao(en){
+  const words = en.match(/[A-Za-z][A-Za-z'\-]*/g);
+  if(!words || !words.length) return;
+  let i = 0;
+  function next(){
+    if(i >= words.length) return;
+    const a = new Audio();
+    a.preload = 'auto';
+    a.src = _youdaoUrl(words[i]);
+    i++;
+    a.onended = next;
+    a.onerror = next;
+    a.play().catch(next);
+  }
+  next();
 }
 // 根据单词 id 播放例句
 function speakExampleById(word){
@@ -750,7 +775,14 @@ function toggleStar(w){
 }
 
 /* ================= 词频星空 ================= */
+function isMobile(){
+  return window.innerWidth <= 768;
+}
 function renderStars(c){
+  if(isMobile()){
+    renderStarsMobile(c);
+    return;
+  }
   c.innerHTML = `
     <div class="section-title"><span class="dot"></span> 词频星空 <span style="font-weight:400;font-size:12px;color:var(--txt3)">点击星星查看单词 · 拖拽平移 · 滚轮缩放</span></div>
     <div class="starmap-wrap">
@@ -765,6 +797,34 @@ function renderStars(c){
     </div>
   `;
   initStarmap();
+}
+// 手机端：高频词卡片流（按词频降序，未掌握优先，可直接点、可发音、带进度）
+function renderStarsMobile(c){
+  const hasFreq = WORDS.filter(w=>w.f).sort((a,b)=>(b.f||0)-(a.f||0));
+  // 未掌握的排前面
+  const unlearned = hasFreq.filter(w=>!progress[w.w]);
+  const learned = hasFreq.filter(w=>progress[w.w]);
+  const list = unlearned.concat(learned);
+  browseList = list;
+  c.innerHTML = `
+    <div class="section-title"><span class="dot"></span> 高频核心词 <span style="font-weight:400;font-size:12px;color:var(--txt3)">按考频从高到低 · 未掌握优先</span></div>
+    <div class="freq-list">
+      ${list.map((w,i)=>{
+        const st = progress[w.w];
+        const dot = st==='know'?'<span class="fdot know">✓</span>':st==='fuzzy'?'<span class="fdot fuzzy">?</span>':st==='unknown'?'<span class="fdot unknown">✗</span>':'<span class="fdot"></span>';
+        return `<div class="freq-item" onclick="openWord('${w.w}')">
+          <span class="frank">${i+1}</span>
+          <div class="fword">
+            <span class="fw">${w.w}</span>
+            <span class="fp">${w.p?'/'+w.p+'/':''}</span>
+          </div>
+          <span class="freq">⚡${w.f}</span>
+          <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}')">🔊</span>
+          ${dot}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
 }
 
 function initStarmap(){
@@ -1166,6 +1226,17 @@ function toast(msg){
 }
 buildNav();
 render();
+// 横竖屏/窗口尺寸变化时，若当前在词频星空则重渲染（手机端列表 vs 桌面端星图切换）
+let _lastWidth = window.innerWidth;
+window.addEventListener('resize', ()=>{
+  const w = window.innerWidth;
+  if((_lastWidth<=768 && w>768) || (_lastWidth>768 && w<=768)){
+    _lastWidth = w;
+    if(currentView==='stars') renderStars(document.getElementById('content'));
+  } else {
+    _lastWidth = w;
+  }
+});
 </script>
 </body>
 </html>
