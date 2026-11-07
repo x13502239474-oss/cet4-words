@@ -600,7 +600,7 @@ function buildNav(){
 function updateFoot(){
   const s = stats();
   document.getElementById('sideFoot').innerHTML =
-    `已点亮 <b style="color:var(--teal)">${s.learned}</b> / ${s.total} 词<br>掌握 ${s.know} · 模糊 ${s.fuzzy} · 生疏 ${s.unknown}`;
+    `已点亮 <b style="color:var(--teal)">${s.learned}</b> / ${s.total} 词<br>掌握 ${s.know} · 模糊 ${s.fuzzy} · 生疏 ${s.unknown}<br><span style="opacity:.6">v7 · 在线发音版</span>`;
 }
 function go(id){
   currentView = id;
