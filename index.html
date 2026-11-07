@@ -501,17 +501,19 @@ function speakExampleById(word){
   const a = new Audio();
   a.preload = 'auto';
   let ok = false;
+  let failMsg = '';
   a.addEventListener('error', (e)=>{
-    if(!ok){ toast('例句音频加载失败'); }
+    const code = a.error ? a.error.code : '';
+    if(!ok){
+      toast('例句加载失败(code=' + code + ')');
+    }
   });
-  a.addEventListener('canplay', ()=>{
-    ok = true;
-    a.play().catch(()=>{});
-  });
-  a.addEventListener('ended', ()=>{ ok = true; });
+  a.addEventListener('canplay', ()=>{ ok = true; a.play().catch(()=>{}); });
+  a.addEventListener('canplaythrough', ()=>{ ok = true; });
   a.src = url;
   a.load();
-  a.play().then(()=>{ ok = true; }).catch(()=>{});
+  const p = a.play();
+  if(p && p.then){ p.then(()=>{ ok=true; }).catch(()=>{}); }
 }
 
 /* ================= 星空背景 ================= */
