@@ -97,8 +97,8 @@ body::before{
 .topbar .spacer{flex:1}
 /* 返回按钮 */
 .back-btn{
-  width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
-  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:16px;
+  width:44px;height:44px;border-radius:12px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:22px;
   display:none;align-items:center;justify-content:center;flex-shrink:0;
   transition:all .15s;
 }
@@ -106,16 +106,16 @@ body::before{
 .back-btn.show{display:flex}
 /* 汉堡菜单（移动端） */
 .menu-btn{
-  width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
-  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:18px;
+  width:44px;height:44px;border-radius:12px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:24px;
   display:none;align-items:center;justify-content:center;flex-shrink:0;
   transition:all .15s;
 }
 .menu-btn:hover{border-color:var(--purple)}
 /* Home 按钮（始终显示，任何页面一键回首页） */
 .home-btn{
-  width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
-  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:16px;
+  width:44px;height:44px;border-radius:12px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:22px;
   display:flex;align-items:center;justify-content:center;flex-shrink:0;
   transition:all .15s;line-height:1;
 }
@@ -495,9 +495,23 @@ function speakExampleById(word){
     toast('这个词没有例句音频');
     return;
   }
-  _playAudio('audio/' + w.ak + '.mp3', 1, ()=>{
-    toast('例句音频加载失败');
+  // 用绝对路径（基于当前页面，避免相对路径解析问题）
+  const base = location.href.replace(/[^/]*$/, '');
+  const url = base + 'audio/' + w.ak + '.mp3';
+  const a = new Audio();
+  a.preload = 'auto';
+  let ok = false;
+  a.addEventListener('error', (e)=>{
+    if(!ok){ toast('例句音频加载失败'); }
   });
+  a.addEventListener('canplay', ()=>{
+    ok = true;
+    a.play().catch(()=>{});
+  });
+  a.addEventListener('ended', ()=>{ ok = true; });
+  a.src = url;
+  a.load();
+  a.play().then(()=>{ ok = true; }).catch(()=>{});
 }
 
 /* ================= 星空背景 ================= */
