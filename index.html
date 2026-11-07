@@ -95,6 +95,23 @@ body::before{
 .topbar .title{font-size:16px;font-weight:700}
 .topbar .sub{font-size:12px;color:var(--txt3)}
 .topbar .spacer{flex:1}
+/* 返回按钮 */
+.back-btn{
+  width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:16px;
+  display:none;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all .15s;
+}
+.back-btn:hover{border-color:var(--purple)}
+.back-btn.show{display:flex}
+/* 汉堡菜单（移动端） */
+.menu-btn{
+  width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:18px;
+  display:none;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all .15s;
+}
+.menu-btn:hover{border-color:var(--purple)}
 .search{
   display:flex;align-items:center;gap:8px;background:var(--bg3);
   border-radius:20px;padding:8px 14px;min-width:220px;border:1px solid transparent;
@@ -144,6 +161,20 @@ body::before{
 .tag.cat{color:var(--blue);background:rgba(96,165,250,.12)}
 .tag.root{color:var(--teal);background:rgba(45,212,191,.12)}
 .tag.master{color:var(--green);background:rgba(74,222,128,.12)}
+
+/* 发音按钮 */
+.spk{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:26px;height:26px;border-radius:50%;
+  background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.35);
+  color:var(--purple2);cursor:pointer;font-size:13px;flex-shrink:0;
+  transition:all .15s;line-height:1;
+}
+.spk:hover{background:rgba(139,92,246,.3);transform:scale(1.08)}
+.spk.playing{background:var(--purple);color:#fff;animation:spkPulse .6s ease-in-out infinite}
+@keyframes spkPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+.spk.small{width:22px;height:22px;font-size:11px}
+.spk-row{display:flex;align-items:center;gap:8px}
 
 /* 星图 */
 .starmap-wrap{position:relative;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:radial-gradient(ellipse at center,var(--bg2),var(--bg));height:520px}
@@ -279,6 +310,12 @@ body::before{
   .content{padding:16px}
   .stats{grid-template-columns:repeat(2,1fr)}
   .word-grid{grid-template-columns:1fr}
+  .menu-btn{display:flex}
+  .topbar{padding:0 14px;gap:10px}
+  .search{min-width:0;flex:1}
+  .back-btn{display:none}
+  .back-btn.show{display:flex}
+  .topbar .title{font-size:15px}
 }
 </style>
 </head>
@@ -298,6 +335,8 @@ body::before{
   </aside>
   <div class="main">
     <div class="topbar">
+      <button class="menu-btn" id="menuBtn" onclick="toggleSidebar()">☰</button>
+      <button class="back-btn" id="backBtn" onclick="goBack()">←</button>
       <div>
         <div class="title" id="pageTitle">词汇星图</div>
         <div class="sub" id="pageSub">你的四级单词宇宙</div>
@@ -313,8 +352,9 @@ body::before{
 </div>
 <div class="drawer" id="drawer">
   <div class="drawer-head">
-    <div>
+    <div style="display:flex;align-items:center;gap:12px">
       <span class="dw" id="dwWord"></span>
+      <span class="spk" id="dwSpk" onclick="speakWord(currentDrawerWord)">🔊</span>
       <span class="dp" id="dwPhon"></span>
     </div>
     <button class="drawer-close" onclick="closeDrawer()">✕</button>
@@ -364,6 +404,56 @@ function freqLevel(w){
   return 1;
 }
 
+/* ================= 发音（美音 en-US） ================= */
+let _voiceReady = false;
+function _prepVoice(){
+  if(_voiceReady) return;
+  const voices = speechSynthesis.getVoices();
+  _voiceReady = true;
+}
+if('speechSynthesis' in window){
+  _prepVoice();
+  speechSynthesis.onvoiceschanged = _prepVoice;
+}
+function speak(text, rate){
+  if(!text) return;
+  if(!('speechSynthesis' in window)){
+    toast('当前浏览器不支持发音');
+    return;
+  }
+  // 去掉音标符号、中括号、斜杠，只读英文
+  const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
+  if(!clean) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(clean);
+  u.lang = 'en-US';
+  u.rate = rate || 0.9;
+  // 选美音 voice
+  const voices = speechSynthesis.getVoices();
+  const us = voices.find(v=>v.lang==='en-US') || voices.find(v=>v.lang&&v.lang.startsWith('en-US'));
+  if(us) u.voice = us;
+  speechSynthesis.speak(u);
+}
+// 播放一个词的发音（单词本身）
+function speakWord(word){
+  speak(word, 0.85);
+}
+// 播放例句（只读英文部分，去掉中文翻译）
+function speakExample(e){
+  if(!e) return;
+  // 例句格式可能是 "English. 中文。"，取第一个中文句号/空格前的英文
+  let en = e;
+  const idx = e.search(/[\u4e00-\u9fa5]/);
+  if(idx > 0) en = e.slice(0, idx);
+  en = en.replace(/\s*\/\/.*$/,'').trim();
+  speak(en, 0.82);
+}
+// 根据单词 id 播放例句
+function speakExampleById(word){
+  const w = WORDS.find(x=>x.w===word);
+  if(w && w.e) speakExample(w.e);
+}
+
 /* ================= 星空背景 ================= */
 function initStars(){
   const s = document.getElementById('stars');
@@ -391,6 +481,7 @@ const NAV = [
 let currentView = 'home';
 let currentCat = null;
 let currentRootIdx = null;
+let navHistory = [];  // 导航历史栈，用于返回
 
 function buildNav(){
   const nav = document.getElementById('nav');
@@ -409,9 +500,45 @@ function updateFoot(){
 }
 function go(id){
   currentView = id;
+  currentCat = null;
+  currentRootIdx = null;
+  navHistory = [];  // 回到一级菜单，清空历史
   buildNav();
   render();
+  updateBackBtn();
   if(window.innerWidth<=768) document.getElementById('sidebar').classList.remove('open');
+}
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+}
+function updateBackBtn(){
+  const btn = document.getElementById('backBtn');
+  if(navHistory.length > 0){
+    btn.classList.add('show');
+  }else{
+    btn.classList.remove('show');
+  }
+}
+function goBack(){
+  if(navHistory.length > 0){
+    const prev = navHistory.pop();
+    if(prev.type === 'roots'){
+      currentView = 'roots';
+      currentRootIdx = null;
+      render();
+    }else if(prev.type === 'cats'){
+      currentView = 'cats';
+      currentCat = null;
+      render();
+    }else if(prev.type === 'search'){
+      // 清空搜索框，回到上一视图
+      document.getElementById('searchInput').value = '';
+      searchPushed = false;
+      currentView = prev.view;
+      render();
+    }
+    updateBackBtn();
+  }
 }
 
 /* ================= 渲染分发 ================= */
@@ -513,6 +640,7 @@ function wordCardHTML(w){
     <div class="head">
       <span class="w">${w.w}</span>
       <span class="p">${w.p?('/'+w.p+'/'):''}</span>
+      <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}')">🔊</span>
       ${w.f?`<span class="freq">⚡${w.f}</span>`:''}
     </div>
     <div class="m">${w.m||''}</div>
@@ -521,9 +649,11 @@ function wordCardHTML(w){
 }
 
 /* ================= 单词详情抽屉 ================= */
+let currentDrawerWord = '';
 function openWord(word){
   const w = WORDS.find(x=>x.w===word);
   if(!w) return;
+  currentDrawerWord = w.w;
   document.getElementById('dwWord').textContent = w.w;
   document.getElementById('dwPhon').textContent = w.p ? ('/'+w.p+'/') : '';
   const st = progress[w.w];
@@ -536,7 +666,7 @@ function openWord(word){
   if(w.j) html += `<div class="dsec"><div class="dt">联想记忆</div><div class="dj">${w.j}</div></div>`;
   if(w.k) html += `<div class="dsec"><div class="dt">考点搭配</div><div class="de">${w.k}</div></div>`;
   if(w.d) html += `<div class="dsec"><div class="dt">派生词</div><div class="de">${w.d}</div></div>`;
-  if(w.e) html += `<div class="dsec"><div class="dt">例句</div><div class="de">${w.e}</div></div>`;
+  if(w.e) html += `<div class="dsec"><div class="dt">例句</div><div class="spk-row"><span class="spk small" onclick="speakExampleById('${w.w}')">🔊</span><div class="de">${w.e}</div></div></div>`;
   if(w.n) html += `<div class="dsec"><div class="dt">辨析</div><div class="de">${w.n}</div></div>`;
   if(w.c) html += `<div class="dsec"><div class="dt">主题</div><div class="de">${w.c} ${w.sub?'· '+w.sub:''}</div></div>`;
 
@@ -726,11 +856,13 @@ function renderRoots(c){
 }
 function openRoot(i){
   const r = ROOTS[i];
+  currentRootIdx = i;
+  navHistory.push({type:'roots'});
+  updateBackBtn();
   document.getElementById('pageTitle').textContent = r.r;
   document.getElementById('pageSub').textContent = '词根星系 · '+r.words.length+' 个词';
   const c = document.getElementById('content');
   c.innerHTML = `
-    <button class="btn small" onclick="go('roots')" style="margin-bottom:16px">← 返回词根列表</button>
     ${r.explain?`<div class="dsec"><div class="dt">词根含义</div><div class="dm" style="max-width:720px">${r.explain}</div></div>`:''}
     <div class="word-grid">
       ${r.words.map(w=>`
@@ -738,6 +870,7 @@ function openRoot(i){
           <div class="head">
             <span class="w">${w.w}</span>
             <span class="p">${w.p?('/'+w.p+'/'):''}</span>
+            <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}')">🔊</span>
             ${w.core?'<span class="freq">核心</span>':''}
           </div>
           ${w.dec?`<div class="m" style="color:var(--teal)">${w.dec}</div>`:''}
@@ -757,7 +890,6 @@ function renderCats(c){
     document.getElementById('pageTitle').textContent = currentCat;
     document.getElementById('pageSub').textContent = '主题星球 · '+list.length+' 个词';
     c.innerHTML = `
-      <button class="btn small" onclick="currentCat=null;go('cats')" style="margin-bottom:16px">← 返回主题列表</button>
       <div class="word-grid">${list.map(w=>wordCardHTML(w)).join('')}</div>
     `;
     return;
@@ -766,7 +898,7 @@ function renderCats(c){
     <div class="section-title"><span class="dot"></span> 主题星球 · 9 大分类</div>
     <div class="root-grid">
       ${catNames.map(cn=>`
-        <div class="root-card" onclick="currentCat='${cn}';renderCats(document.getElementById('content'))">
+        <div class="root-card" onclick="currentCat='${cn}';navHistory.push({type:'cats'});updateBackBtn();renderCats(document.getElementById('content'))">
           <div class="rr" style="color:var(--blue)">${cn}</div>
           <div class="cnt">${cats[cn].length} 个词</div>
         </div>`).join('')}
@@ -809,7 +941,7 @@ function showCard(){
       <div class="progress-bar"><div class="progress-fill" style="width:${(learnIdx/total*100)}%"></div></div>
     </div>
     <div class="flashcard">
-      <div class="big-w">${w.w}</div>
+      <div class="big-w">${w.w} <span class="spk" onclick="speakWord('${w.w}')">🔊</span></div>
       <div class="big-p">${w.p?'/'+w.p+'/':''}</div>
       <div class="rev hide" id="rev" onclick="revealRev()">
         <div class="mline">${w.m||''}</div>
@@ -874,7 +1006,7 @@ function showQuiz(){
       <div class="progress-bar"><div class="progress-fill" style="width:${(quizIdx/quizQueue.length*100)}%"></div></div>
     </div>
     <div class="quiz-q">
-      <div class="qword">${w.w}</div>
+      <div class="qword">${w.w} <span class="spk" onclick="speakWord('${w.w}')">🔊</span></div>
       <div class="qphon">${w.p?'/'+w.p+'/':''}</div>
       <div class="qopts">
         ${opts.map(o=>`<div class="quiz-opt" data-w="${o.w}" onclick="answerQuiz(this,'${w.w}')">${o.m||'—'}</div>`).join('')}
@@ -937,12 +1069,29 @@ function clearWrong(){
 
 /* ================= 搜索 ================= */
 let searchTimer;
+let searchPushed = false;
 document.getElementById('searchInput').addEventListener('input', function(){
   clearTimeout(searchTimer);
   const q = this.value.trim().toLowerCase();
   searchTimer = setTimeout(()=>{
     const c = document.getElementById('content');
-    if(!q){ render(); return; }
+    if(!q){
+      // 清空搜索：返回之前视图
+      if(searchPushed){
+        searchPushed = false;
+        goBack();
+      }else{
+        render();
+      }
+      updateBackBtn();
+      return;
+    }
+    // 首次输入搜索时记录历史
+    if(!searchPushed){
+      searchPushed = true;
+      navHistory.push({type:'search', view: currentView});
+      updateBackBtn();
+    }
     const results = WORDS.filter(w=>
       w.w.toLowerCase().includes(q) ||
       (w.m&&w.m.toLowerCase().includes(q)) ||
