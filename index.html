@@ -176,6 +176,20 @@ body::before{
 .spk.small{width:22px;height:22px;font-size:11px}
 .spk-row{display:flex;align-items:center;gap:8px}
 
+/* 抽屉翻页导航 */
+.drawer-nav{
+  display:flex;gap:10px;align-items:center;justify-content:center;
+  margin-top:20px;padding-top:16px;border-top:1px solid var(--line);
+}
+.drawer-nav .nav-btn{
+  flex:1;max-width:140px;padding:12px;border-radius:12px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:13px;font-weight:600;
+  transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px;
+}
+.drawer-nav .nav-btn:hover{border-color:var(--purple)}
+.drawer-nav .nav-btn:disabled{opacity:.35;cursor:not-allowed}
+.drawer-nav .nav-pos{font-size:12px;color:var(--txt3);white-space:nowrap}
+
 /* 星图 */
 .starmap-wrap{position:relative;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:radial-gradient(ellipse at center,var(--bg2),var(--bg));height:520px}
 #starmap{width:100%;height:100%;cursor:grab}
@@ -433,9 +447,7 @@ function playYoudao(text, rate){
 function speakWord(word){
   playYoudao(word, 1);
 }
-// 例句逐词播放（有道整句接口不稳定，改为拆词顺序播放）
-let _sentenceQueue = [];
-let _sentencePlaying = false;
+// 例句发音：用百度翻译 TTS（流畅整句，国内可访问）
 function speakExample(e){
   if(!e) return;
   // 提取英文部分（去掉中文翻译和 // 分隔的多句）
@@ -443,26 +455,16 @@ function speakExample(e){
   const idx = e.search(/[\u4e00-\u9fa5]/);
   if(idx > 0) en = e.slice(0, idx);
   en = en.replace(/\s*\/\/.*$/,'').trim();
-  // 拆成单词（保留字母、数字、撇号）
-  const words = en.match(/[A-Za-z][A-Za-z'\-]*/g);
-  if(!words || !words.length) return;
-  // 清空队列，顺序播放
-  _sentenceQueue = words.slice();
-  _sentencePlaying = true;
-  _playNextSentenceWord();
-}
-function _playNextSentenceWord(){
-  if(!_sentencePlaying || _sentenceQueue.length === 0){
-    _sentencePlaying = false;
-    return;
-  }
-  const w = _sentenceQueue.shift();
+  // 去掉音标符号，保留正常标点
+  en = en.replace(/[\[\]\/ˈˌː]/g,'').trim();
+  if(!en) return;
+  const url = 'https://fanyi.baidu.com/gettts?lan=en&text=' + encodeURIComponent(en) + '&spd=3&source=web';
   const a = _getAudio();
-  a.src = _youdaoUrl(w);
-  a.playbackRate = 0.95;
-  a.onended = ()=>{ _playNextSentenceWord(); };
-  a.onerror = ()=>{ _playNextSentenceWord(); };  // 某词失败则跳过继续
-  a.play().catch(()=>{ _playNextSentenceWord(); });
+  a.src = url;
+  a.playbackRate = 1;
+  a.play().catch(()=>{
+    toast('例句发音加载失败，请检查网络');
+  });
 }
 // 根据单词 id 播放例句
 function speakExampleById(word){
@@ -642,7 +644,10 @@ function renderHome(c){
 }
 
 /* ================= 词条网格渲染 ================= */
+let browseList = [];      // 当前浏览的单词列表（用于详情页上下翻页）
+let browseIndex = 0;
 function renderWordGrid(el, list){
+  browseList = list;
   el.innerHTML = list.map(w=>wordCardHTML(w)).join('');
 }
 function wordCardHTML(w){
@@ -666,10 +671,21 @@ function wordCardHTML(w){
 
 /* ================= 单词详情抽屉 ================= */
 let currentDrawerWord = '';
-function openWord(word){
+function openWord(word, list){
+  // 若传入列表，用它作为浏览上下文；否则用全局 browseList
+  if(Array.isArray(list)){
+    browseList = list;
+  }
   const w = WORDS.find(x=>x.w===word);
   if(!w) return;
   currentDrawerWord = w.w;
+  // 定位在浏览列表中的位置
+  browseIndex = browseList.findIndex(x=>x.w===word);
+  if(browseIndex < 0){
+    // 不在列表里，就单看这一个词（无翻页）
+    browseList = [w];
+    browseIndex = 0;
+  }
   document.getElementById('dwWord').textContent = w.w;
   document.getElementById('dwPhon').textContent = w.p ? ('/'+w.p+'/') : '';
   const st = progress[w.w];
@@ -692,9 +708,27 @@ function openWord(word){
     <button class="btn ${st==='unknown'?'primary':''}" onclick="markWord('${w.w}','unknown')">不认识</button>
     <button class="btn ${starred[w.w]?'primary':''}" onclick="toggleStar('${w.w}')">${starred[w.w]?'★ 已收藏':'☆ 收藏'}</button>
   </div>`;
+
+  // 上下翻页导航
+  if(browseList.length > 1){
+    const hasPrev = browseIndex > 0;
+    const hasNext = browseIndex < browseList.length - 1;
+    html += `<div class="drawer-nav">
+      <button class="nav-btn" ${hasPrev?'':'disabled'} onclick="navWord(-1)">← 上一个</button>
+      <span class="nav-pos">${browseIndex+1} / ${browseList.length}</span>
+      <button class="nav-btn" ${hasNext?'':'disabled'} onclick="navWord(1)">下一个 →</button>
+    </div>`;
+  }
   b.innerHTML = html;
   document.getElementById('drawer').classList.add('open');
   document.getElementById('mask').classList.add('show');
+}
+// 上下翻页
+function navWord(dir){
+  const ni = browseIndex + dir;
+  if(ni < 0 || ni >= browseList.length) return;
+  const w = browseList[ni];
+  openWord(w.w, browseList);
 }
 function closeDrawer(){
   document.getElementById('drawer').classList.remove('open');
@@ -805,7 +839,7 @@ function initStarmap(){
     for(let i=0;i<nodes.length;i++){
       const p=positions[i];
       const dx=mx-p.x, dy=my-p.y;
-      if(dx*dx+dy*dy < 140){ openWord(nodes[i].w.w); return; }
+      if(dx*dx+dy*dy < 140){ openWord(nodes[i].w.w, nodes.map(n=>n.w)); return; }
     }
   });
 
@@ -875,6 +909,9 @@ function openRoot(i){
   currentRootIdx = i;
   navHistory.push({type:'roots'});
   updateBackBtn();
+  // 记录浏览列表为这个词根下的词（用完整词对象，便于翻页时取到丰富字段）
+  const rootWords = r.words.map(rw=>WORDS.find(x=>x.w===rw.w)).filter(Boolean);
+  browseList = rootWords;
   document.getElementById('pageTitle').textContent = r.r;
   document.getElementById('pageSub').textContent = '词根星系 · '+r.words.length+' 个词';
   const c = document.getElementById('content');
