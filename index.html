@@ -312,6 +312,17 @@ body::before{
 .quiz-result{text-align:center;padding:40px 20px}
 .quiz-result .score{font-size:56px;font-weight:800;background:linear-gradient(135deg,var(--amber),var(--pink));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 
+/* 对决音效开关 + 答题反馈 */
+.battle-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;color:var(--txt2);font-size:13px}
+.battle-bar .bt{font-weight:600;color:var(--txt)}
+.sfx-toggle{background:var(--bg3);border:1px solid var(--line);color:var(--txt2);border-radius:999px;padding:6px 13px;font-size:12px;cursor:pointer;white-space:nowrap;transition:all .15s}
+.sfx-toggle.on{color:var(--teal);border-color:rgba(45,212,191,.45);background:rgba(45,212,191,.1)}
+.sfx-toggle:hover{transform:translateY(-1px)}
+.quiz-q.flash-ok{animation:qFlashOk .55s ease-out}
+.quiz-q.flash-no{animation:qFlashNo .42s ease-out}
+@keyframes qFlashOk{0%{box-shadow:0 0 0 0 rgba(74,222,128,.55)}100%{box-shadow:0 0 0 20px rgba(74,222,128,0)}}
+@keyframes qFlashNo{0%,100%{transform:translateX(0)}20%{transform:translateX(-7px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(2px)}}
+
 /* 弹窗/抽屉 */
 .drawer{
   position:fixed;top:0;right:-460px;width:460px;max-width:92vw;height:100%;
@@ -1270,6 +1281,94 @@ function answerCard(st){
   showCard();
 }
 
+/* ================= 答题音效 =================
+   不依赖外部文件：运行时合成 PCM WAV（data URI），用 <audio> 元素播放。
+   iOS 静音拨杆只压 ambient 类声音，HTML5 <audio> 属于 playback 媒体通道，
+   静音状态下依然能出声；另配首次手势解锁 + 振动 + 画面反馈三重保险。 */
+const SFX = (function(){
+  function wav(notes, dur){
+    const sr = 22050, n = Math.floor(sr*dur);
+    const buf = new ArrayBuffer(44 + n*2), v = new DataView(buf);
+    const put = (o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+    put(0,'RIFF'); v.setUint32(4,36+n*2,true); put(8,'WAVE');
+    put(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+    put(36,'data'); v.setUint32(40,n*2,true);
+    for(let i=0;i<n;i++){
+      const t = i/sr; let s = 0;
+      for(const no of notes){
+        const dt = t-no.at;
+        if(dt < 0 || dt > no.len) continue;
+        const env = Math.min(1,dt/0.005)*Math.pow(1-dt/no.len, no.shape||2);
+        s += Math.sin(2*Math.PI*no.f*dt)*env*no.g;
+        if(no.h) s += Math.sin(2*Math.PI*no.f*2*dt)*env*no.g*no.h;
+      }
+      v.setInt16(44+i*2, Math.round(Math.max(-1,Math.min(1,s))*26000), true);
+    }
+    const bytes = new Uint8Array(buf); let bin = '';
+    for(let i=0;i<bytes.length;i+=0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i,i+0x8000));
+    return 'data:audio/wav;base64,' + btoa(bin);
+  }
+  // 答对：E5 → A5 → D6 上行三音，明亮短促
+  const ok = wav([
+    {at:0,    f:659.25, len:0.15, g:0.52, h:0.18, shape:1.5},
+    {at:0.085,f:880,    len:0.18, g:0.52, h:0.15, shape:1.6},
+    {at:0.185,f:1174.7, len:0.30, g:0.48, h:0.12, shape:2.1}
+  ], 0.50);
+  // 答错：G3 → D3 下行低音，不刺耳
+  const no = wav([
+    {at:0,   f:196,    len:0.20, g:0.48, shape:1.6},
+    {at:0.10,f:146.83, len:0.28, g:0.52, shape:1.9},
+    {at:0,   f:98,     len:0.38, g:0.16, shape:2.2}
+  ], 0.42);
+  const mk = src=>{ const a = new Audio(); a.src = src; a.preload = 'auto';
+    a.setAttribute('playsinline',''); a.setAttribute('webkit-playsinline',''); a.load(); return a; };
+  return {ok:mk(ok), no:mk(no)};
+})();
+
+let sfxOn = store.get('sfx', true);
+let sfxUnlocked = false;
+// 首次手势：用非 muted 的 <audio> 播一段近静音 WAV，把 iOS 音频会话切到 playback 类别
+function unlockSfx(){
+  if(sfxUnlocked) return;
+  sfxUnlocked = true;
+  try{
+    const a = new Audio();
+    a.src = SILENT_WAV;
+    a.muted = false;
+    a.setAttribute('playsinline','');
+    const p = a.play();
+    if(p && p.catch) p.catch(()=>{});
+    setTimeout(()=>{ try{ a.pause(); }catch(e){} }, 200);
+  }catch(e){}
+}
+document.addEventListener('pointerdown', unlockSfx, true);
+document.addEventListener('keydown', unlockSfx, true);
+
+function playSfx(kind){
+  if(!sfxOn) return;
+  const a = SFX[kind];
+  if(!a) return;
+  try{ a.pause(); }catch(e){}
+  try{ a.currentTime = 0; }catch(e){}
+  try{ a.muted = false; }catch(e){}
+  try{
+    const p = a.play();   // 由答题点击这个用户手势直接触发，iOS 允许起播
+    if(p && p.catch) p.catch(()=>{});
+  }catch(e){}
+  // 静音/无声环境的补充反馈（Android Chrome 支持振动）
+  try{ if(navigator.vibrate) navigator.vibrate(kind==='ok' ? 35 : [30,45,70]); }catch(e){}
+}
+function toggleSfx(btn){
+  sfxOn = !sfxOn;
+  store.set('sfx', sfxOn);
+  if(btn){
+    btn.classList.toggle('on', sfxOn);
+    btn.textContent = sfxOn ? '🔊 音效开' : '🔇 音效关';
+  }
+  if(sfxOn) playSfx('ok');   // 打开时试听一声
+}
+
 /* ================= 词义对决 ================= */
 let quizQueue = [];
 let quizIdx = 0;
@@ -1278,7 +1377,13 @@ let quizAnswered = false;
 function renderBattle(c){
   quizQueue = WORDS.filter(w=>w.m).sort(()=>Math.random()-0.5).slice(0,20);
   quizIdx = 0; quizScore = 0; quizAnswered = false;
-  c.innerHTML = `<div class="quiz-stage" id="quizStage"></div>`;
+  c.innerHTML = `
+    <div class="battle-bar">
+      <span class="bt">⚔️ 词义对决 · ${quizQueue.length} 题</span>
+      <button class="sfx-toggle ${sfxOn?'on':''}" onclick="toggleSfx(this)"
+        title="音效走媒体通道，iPhone 静音拨杆下也能响；若把媒体音量调到 0 则无法出声">${sfxOn?'🔊 音效开':'🔇 音效关'}</button>
+    </div>
+    <div class="quiz-stage" id="quizStage"></div>`;
   showQuiz();
 }
 function showQuiz(){
@@ -1324,6 +1429,13 @@ function answerQuiz(el, correctW){
     if(o.dataset.w===correctW) o.classList.add('correct');
     else if(o===el) o.classList.add('wrong');
   });
+  playSfx(isCorrect ? 'ok' : 'no');
+  const q = el.closest('.quiz-q');
+  if(q){
+    q.classList.remove('flash-ok','flash-no');
+    void q.offsetWidth;   // 强制重排，连答时动画能重播
+    q.classList.add(isCorrect ? 'flash-ok' : 'flash-no');
+  }
   if(isCorrect){
     quizScore++;
     if(progress[correctW]!=='know'){ progress[correctW]='know'; saveProgress(); }
