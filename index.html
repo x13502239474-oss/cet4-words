@@ -112,6 +112,14 @@ body::before{
   transition:all .15s;
 }
 .menu-btn:hover{border-color:var(--purple)}
+/* Home 按钮（始终显示，任何页面一键回首页） */
+.home-btn{
+  width:34px;height:34px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg3);color:var(--txt);cursor:pointer;font-size:16px;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all .15s;line-height:1;
+}
+.home-btn:hover{border-color:var(--purple);background:var(--purple);color:#fff}
 .search{
   display:flex;align-items:center;gap:8px;background:var(--bg3);
   border-radius:20px;padding:8px 14px;min-width:220px;border:1px solid transparent;
@@ -382,6 +390,7 @@ body::before{
   <div class="main">
     <div class="topbar">
       <button class="menu-btn" id="menuBtn" onclick="toggleSidebar()">☰</button>
+      <button class="home-btn" onclick="goHome()" title="回到星图总览">⌂</button>
       <button class="back-btn" id="backBtn" onclick="goBack()">←</button>
       <div>
         <div class="title" id="pageTitle">词汇星图</div>
@@ -544,6 +553,16 @@ function go(id){
   render();
   updateBackBtn();
   if(window.innerWidth<=768) document.getElementById('sidebar').classList.remove('open');
+}
+// 一键回到星图总览（任何页面可用）
+function goHome(){
+  // 关闭抽屉
+  closeDrawer();
+  // 清空搜索框
+  const si = document.getElementById('searchInput');
+  if(si) si.value = '';
+  searchPushed = false;
+  go('home');
 }
 function toggleSidebar(){
   document.getElementById('sidebar').classList.toggle('open');
