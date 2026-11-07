@@ -410,7 +410,7 @@ body::before{
   <div class="drawer-head">
     <div style="display:flex;align-items:center;gap:12px">
       <span class="dw" id="dwWord"></span>
-      <span class="spk" id="dwSpk" onclick="speakWord(currentDrawerWord)">🔊</span>
+      <span class="spk" id="dwSpk" onclick="speakWord(currentDrawerWord,this)">🔊</span>
       <span class="dp" id="dwPhon"></span>
     </div>
     <button class="drawer-close" onclick="closeDrawer()">✕</button>
@@ -494,7 +494,7 @@ function unlockAudio(){
 document.addEventListener("pointerdown", unlockAudio, true);
 document.addEventListener("keydown", unlockAudio, true);
 
-// 发音音频地址：单词走有道（真人录音），句子走百度（长文本稳定）
+// 在线 TTS：只作兜底（本地音频缺失/失效时才用）
 function ttsUrl(text, alt){
   const t = (text || "").trim();
   const isWord = t && !/\s/.test(t);
@@ -506,56 +506,127 @@ function ttsUrl(text, alt){
     : "https://fanyi.baidu.com/gettts?lan=en&text=" + encodeURIComponent(t) + "&spd=3&source=web";
 }
 
+// 浏览器内置英文朗读：最后一道兜底，完全离线
+function browserSpeak(text, rate){
+  if(!text || !('speechSynthesis' in window) || !window.SpeechSynthesisUtterance) return false;
+  try{
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-US';
+    u.rate = Math.max(0.6, Math.min(1.3, rate || 0.9));
+    const voices = synth.getVoices() || [];
+    const v = voices.find(x=>/^en[-_]/i.test(x.lang));
+    if(v) u.voice = v;
+    synth.speak(u);
+    try{ synth.resume(); }catch(e){}
+    return true;
+  }catch(e){ return false; }
+}
+
+// 喇叭按钮播放态
+function setSpkState(btn, on){
+  document.querySelectorAll('.spk.playing').forEach(el=>{ if(el !== btn) el.classList.remove('playing'); });
+  if(btn && btn.classList) btn.classList.toggle('playing', !!on);
+}
+
+/* 依次尝试多个音频源：本地 MP3 → 在线主 → 在线备 → 系统朗读
+   error / play() 被拒 / 8 秒没出声 都会自动切到下一个源，不会点了没反应 */
+let playToken = 0;
+function playSources(sources, text, opts){
+  opts = opts || {};
+  const token = ++playToken;
+  const alive = ()=> token === playToken;
+  const a = ensureAudio();
+  let idx = 0, timer = null, done = false;
+
+  const cleanup = ()=>{
+    if(timer){ clearTimeout(timer); timer = null; }
+    a.onplaying = a.onended = a.onerror = null;
+  };
+  const finish = ()=>{
+    if(done) return; done = true; cleanup();
+    setSpkState(opts.btn, false);
+    if(opts.onend) opts.onend();
+  };
+  const failAll = ()=>{
+    if(done) return; done = true; cleanup();
+    setSpkState(opts.btn, false);
+    if(!browserSpeak(text, opts.rate)) toast('发音失败，请检查网络');
+    if(opts.onfail) opts.onfail();
+  };
+  const next = ()=>{
+    if(!alive() || done) return;
+    if(idx >= sources.length){ failAll(); return; }
+    const src = sources[idx++];
+    cleanup();
+    let advanced = false;
+    const advance = ()=>{ if(advanced || !alive() || done) return; advanced = true; next(); };
+    a.onplaying = ()=>{
+      if(!alive() || done) return;
+      if(timer){ clearTimeout(timer); timer = null; }
+      setSpkState(opts.btn, true);
+    };
+    a.onended = ()=>{ if(alive()) finish(); };
+    a.onerror = advance;
+    try{ a.pause(); }catch(e){}
+    a.src = src;
+    a.playbackRate = Math.max(0.6, Math.min(1.6, opts.rate || 1));
+    try{ a.preservesPitch = true; a.webkitPreservesPitch = true; }catch(e){}
+    try{ a.load(); }catch(e){}
+    const pr = a.play();
+    if(pr && pr.catch) pr.catch(err=>{
+      if(err && err.name === 'AbortError') return;
+      advance();
+    });
+    timer = setTimeout(advance, 8000);   // 在线接口常静默挂起，超时自动换源
+  };
+  try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(e){}
+  try{ a.pause(); }catch(e){}
+  next();
+}
+
+// 兼容旧的播放调用
 function playAudio(text, btn, opts){
   opts = opts || {};
   if(!text){ if(opts.onend) opts.onend(); return; }
-  const a = ensureAudio();
-  let ended = false, alt = !!opts.__alt;
-  const finish = ()=>{ if(ended) return; ended = true; if(opts.onend) opts.onend(); };
-  const fail = ()=>{
-    finish();
-    if(opts.onfail){ opts.onfail(); return; }
-    toast('发音失败，请检查网络');
-  };
-  const load = ()=>{
-    a.onended = finish;
-    a.onerror = ()=>{
-      if(!alt){ alt = true; load(); return; }   // 主源失效换备用源
-      fail();
-    };
-    a.src = ttsUrl(text, alt);
-    a.playbackRate = Math.max(0.6, Math.min(1.6, opts.rate || 1));
-    try{ a.preservesPitch = true; a.webkitPreservesPitch = true; }catch(e){}
-    const pr = a.play();
-    if(pr && pr.catch) pr.catch(err=>{
-      if(err && err.name === "AbortError") return;
-      if(opts.onfail){ fail(); return; }
-      finish();
-    });
-  };
-  try{ a.pause(); }catch(e){}
-  load();
+  playSources([ttsUrl(text,false), ttsUrl(text,true)], text, {
+    btn, rate: opts.rate, onend: opts.onend, onfail: opts.onfail
+  });
 }
 
-// 播放单词发音
-function speakWord(word){
-  playAudio(word, null, {});
+// 播放单词发音（有道真人录音 → 百度 → 系统朗读）
+function speakWord(word, btn){
+  playSources([ttsUrl(word,false), ttsUrl(word,true)], word, {btn});
 }
-// 例句发音：提取英文部分（去掉中文），整句走百度
-function speakExampleById(word){
+
+// 例句发音：优先播放随站点一起部署的本地 MP3，离线也能响
+function speakExampleById(word, btn){
   const w = WORDS.find(x=>x.w===word);
-  if(!w || !w.e) return;
+  if(!w || !w.e){ toast('这个词没有例句'); return; }
   const en = enPart(w.e);
-  if(!en){ toast('这个词没有例句音频'); return; }
-  playAudio(en, null, {});
+  const sources = [];
+  if(w.ak) sources.push('audio/' + w.ak + '.mp3');   // data.js 里 ak 即音频文件名
+  if(en) sources.push(ttsUrl(en,false), ttsUrl(en,true));
+  if(!sources.length){ toast('这个词没有例句音频'); return; }
+  playSources(sources, en || word, {btn});
 }
-// 例句字段「英文.中文。」拼接，朗读只取前半段英文
+
+// 例句字段「英文. 中文。」拼接，兜底朗读时只取前半段英文
 const CJK_RE = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]/;
 function enPart(s){
-  const t = String(s||"").replace(/[\u201c\u201d"]/g,"").trim();
+  let t = String(s||"")
+    .replace(/^【例】\s*/, "")
+    .replace(/[\u201c\u201d"]/g, "")
+    .trim();
   const i = t.search(CJK_RE);
   if(i === 0) return "";
-  return (i > 0 ? t.slice(0,i) : t).trim();
+  if(i > 0) t = t.slice(0, i);
+  return t
+    .replace(/\s*\/\/.*$/, "")                              // 多组例句只取第一组
+    .replace(/[（(]\s*20\d{2}\.\d{1,2}\s*[)）]/g, "")     // 去掉（2010.12）真题年份
+    .replace(/[\[\]/ˈˌː]/g, "")
+    .trim();
 }
 
 /* ================= 星空背景 ================= */
@@ -757,7 +828,7 @@ function wordCardHTML(w){
     <div class="head">
       <span class="w">${w.w}</span>
       <span class="p">${w.p?('/'+w.p+'/'):''}</span>
-      <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}')">🔊</span>
+      <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}',this)">🔊</span>
       ${w.f?`<span class="freq">⚡${w.f}</span>`:''}
     </div>
     <div class="m">${w.m||''}</div>
@@ -794,7 +865,7 @@ function openWord(word, list){
   if(w.j) html += `<div class="dsec"><div class="dt">联想记忆</div><div class="dj">${w.j}</div></div>`;
   if(w.k) html += `<div class="dsec"><div class="dt">考点搭配</div><div class="de">${w.k}</div></div>`;
   if(w.d) html += `<div class="dsec"><div class="dt">派生词</div><div class="de">${w.d}</div></div>`;
-  if(w.e) html += `<div class="dsec"><div class="dt">例句</div><div class="spk-row"><span class="spk small" onclick="speakExampleById('${w.w}')">🔊</span><div class="de">${w.e}</div></div></div>`;
+  if(w.e) html += `<div class="dsec"><div class="dt">例句</div><div class="spk-row"><span class="spk small" onclick="event.stopPropagation();speakExampleById('${w.w}',this)" title="朗读例句">🔊</span><div class="de">${w.e}</div></div></div>`;
   if(w.n) html += `<div class="dsec"><div class="dt">辨析</div><div class="de">${w.n}</div></div>`;
   if(w.c) html += `<div class="dsec"><div class="dt">主题</div><div class="de">${w.c} ${w.sub?'· '+w.sub:''}</div></div>`;
 
@@ -1099,7 +1170,7 @@ function openRoot(i){
           <div class="head">
             <span class="w">${w.w}</span>
             <span class="p">${w.p?('/'+w.p+'/'):''}</span>
-            <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}')">🔊</span>
+            <span class="spk small" onclick="event.stopPropagation();speakWord('${w.w}',this)">🔊</span>
             ${w.core?'<span class="freq">核心</span>':''}
           </div>
           ${w.dec?`<div class="m" style="color:var(--teal)">${w.dec}</div>`:''}
@@ -1170,7 +1241,7 @@ function showCard(){
       <div class="progress-bar"><div class="progress-fill" style="width:${(learnIdx/total*100)}%"></div></div>
     </div>
     <div class="flashcard">
-      <div class="big-w">${w.w} <span class="spk" onclick="speakWord('${w.w}')">🔊</span></div>
+      <div class="big-w">${w.w} <span class="spk" onclick="speakWord('${w.w}',this)">🔊</span></div>
       <div class="big-p">${w.p?'/'+w.p+'/':''}</div>
       <div class="rev hide" id="rev" onclick="revealRev()">
         <div class="mline">${w.m||''}</div>
@@ -1235,7 +1306,7 @@ function showQuiz(){
       <div class="progress-bar"><div class="progress-fill" style="width:${(quizIdx/quizQueue.length*100)}%"></div></div>
     </div>
     <div class="quiz-q">
-      <div class="qword">${w.w} <span class="spk" onclick="speakWord('${w.w}')">🔊</span></div>
+      <div class="qword">${w.w} <span class="spk" onclick="speakWord('${w.w}',this)">🔊</span></div>
       <div class="qphon">${w.p?'/'+w.p+'/':''}</div>
       <div class="qopts">
         ${opts.map(o=>`<div class="quiz-opt" data-w="${o.w}" onclick="answerQuiz(this,'${w.w}')">${o.m||'—'}</div>`).join('')}
