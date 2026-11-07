@@ -404,42 +404,41 @@ function freqLevel(w){
   return 1;
 }
 
-/* ================= 发音（美音 en-US） ================= */
-function speak(text, rate){
-  if(!text) return;
-  if(!('speechSynthesis' in window)){
-    toast('当前浏览器不支持发音，请用 Chrome 打开');
-    return;
+/* ================= 发音（有道真人美音） ================= */
+let _audioEl = null;
+function _getAudio(){
+  if(!_audioEl){
+    _audioEl = new Audio();
+    _audioEl.preload = 'auto';
   }
-  // 去掉音标符号、中括号、斜杠，只读英文
+  return _audioEl;
+}
+// 用有道发音接口播放（type=2 美音，真人发音，iPhone 也能出声）
+function playYoudao(text, rate){
+  if(!text) return;
+  // 去掉音标符号、中括号、斜杠
   const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
   if(!clean) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(clean);
-  u.lang = 'en-US';
-  u.rate = rate || 0.9;
-  u.volume = 1;
-  u.pitch = 1;
-  // 选美音 voice（若语音列表已就绪）
-  let voices = [];
-  try { voices = speechSynthesis.getVoices() || []; } catch(e){}
-  const us = voices.find(v=>v.lang==='en-US') || voices.find(v=>v.lang&&v.lang.toLowerCase().startsWith('en-us'));
-  if(us) u.voice = us;
-  speechSynthesis.speak(u);
+  const url = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(clean) + '&type=2';
+  const a = _getAudio();
+  a.src = url;
+  a.playbackRate = rate || 1;
+  a.play().catch(()=>{
+    toast('发音加载失败，请检查网络');
+  });
 }
-// 播放一个词的发音（单词本身）
+// 播放单词发音
 function speakWord(word){
-  speak(word, 0.85);
+  playYoudao(word, 1);
 }
-// 播放例句（只读英文部分，去掉中文翻译）
+// 播放例句发音（只读英文部分，去掉中文翻译）
 function speakExample(e){
   if(!e) return;
-  // 例句格式可能是 "English. 中文。"，取第一个中文句号/空格前的英文
   let en = e;
   const idx = e.search(/[\u4e00-\u9fa5]/);
   if(idx > 0) en = e.slice(0, idx);
   en = en.replace(/\s*\/\/.*$/,'').trim();
-  speak(en, 0.82);
+  playYoudao(en, 0.9);
 }
 // 根据单词 id 播放例句
 function speakExampleById(word){
