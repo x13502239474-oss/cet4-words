@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>词汇星图 · 四级单词宇宙</title>
-<script src="data.js?v=20261107b"></script>
+<script src="data.js?v=20261107c"></script>
 <style>
 :root{
   --bg:#0b0f1a;
@@ -461,10 +461,18 @@ function _playAudio(url, rate, onFail){
   const a = new Audio();
   a.preload = 'auto';
   a.playbackRate = rate || 1;
-  a.addEventListener('error', ()=>{ if(onFail) onFail(); });
+  let started = false;
+  a.addEventListener('error', (e)=>{
+    if(!started && onFail) onFail();
+  });
+  a.addEventListener('canplay', ()=>{
+    started = true;
+    a.play().catch(()=>{});
+  });
   a.src = url;
   a.load();
-  a.play().catch(()=>{});
+  // 立即尝试播放（iOS 需要同步调用）
+  a.play().then(()=>{ started = true; }).catch(()=>{});
 }
 // 播放单词发音
 function speakWord(word){
