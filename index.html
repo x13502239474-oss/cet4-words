@@ -413,13 +413,15 @@ function _getAudio(){
   }
   return _audioEl;
 }
-// 用有道发音接口播放（type=2 美音，真人发音，iPhone 也能出声）
+// 有道发音 URL（type=2 美音）
+function _youdaoUrl(text){
+  const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
+  return 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(clean) + '&type=2';
+}
+// 播放单个音频（单词用）
 function playYoudao(text, rate){
   if(!text) return;
-  // 去掉音标符号、中括号、斜杠
-  const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
-  if(!clean) return;
-  const url = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(clean) + '&type=2';
+  const url = _youdaoUrl(text);
   const a = _getAudio();
   a.src = url;
   a.playbackRate = rate || 1;
@@ -431,14 +433,36 @@ function playYoudao(text, rate){
 function speakWord(word){
   playYoudao(word, 1);
 }
-// 播放例句发音（只读英文部分，去掉中文翻译）
+// 例句逐词播放（有道整句接口不稳定，改为拆词顺序播放）
+let _sentenceQueue = [];
+let _sentencePlaying = false;
 function speakExample(e){
   if(!e) return;
+  // 提取英文部分（去掉中文翻译和 // 分隔的多句）
   let en = e;
   const idx = e.search(/[\u4e00-\u9fa5]/);
   if(idx > 0) en = e.slice(0, idx);
   en = en.replace(/\s*\/\/.*$/,'').trim();
-  playYoudao(en, 0.9);
+  // 拆成单词（保留字母、数字、撇号）
+  const words = en.match(/[A-Za-z][A-Za-z'\-]*/g);
+  if(!words || !words.length) return;
+  // 清空队列，顺序播放
+  _sentenceQueue = words.slice();
+  _sentencePlaying = true;
+  _playNextSentenceWord();
+}
+function _playNextSentenceWord(){
+  if(!_sentencePlaying || _sentenceQueue.length === 0){
+    _sentencePlaying = false;
+    return;
+  }
+  const w = _sentenceQueue.shift();
+  const a = _getAudio();
+  a.src = _youdaoUrl(w);
+  a.playbackRate = 0.95;
+  a.onended = ()=>{ _playNextSentenceWord(); };
+  a.onerror = ()=>{ _playNextSentenceWord(); };  // 某词失败则跳过继续
+  a.play().catch(()=>{ _playNextSentenceWord(); });
 }
 // 根据单词 id 播放例句
 function speakExampleById(word){
