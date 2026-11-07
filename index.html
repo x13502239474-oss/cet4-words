@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
 <title>词汇星图 · 四级单词宇宙</title>
-<script src="data.js?v=20261107c"></script>
+<script src="data.js?v=20261107d"></script>
 <style>
 :root{
   --bg:#0b0f1a;
@@ -459,61 +460,102 @@ function freqLevel(w){
   return 1;
 }
 
-/* ================= 发音（有道单词 + 本地例句音频） ================= */
-// 有道发音 URL（type=2 美音，单词用，手机端已验证稳定）
-function _youdaoUrl(text){
-  const clean = text.replace(/[\[\]\/ˈˌː]/g,'').trim();
-  return 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(clean) + '&type=2';
+/* ================= 发音（照搬高中英语网页的成熟方案） ================= */
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+// 0.1s 静音 WAV，用于首次手势内打开 <audio> 通道
+const SILENT_WAV = "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
+
+let ttsAudio = null, audioReady = false;
+function ensureAudio(){
+  if(!ttsAudio){
+    ttsAudio = new Audio();
+    ttsAudio.preload = "auto";
+    ttsAudio.setAttribute("playsinline", "");
+    ttsAudio.setAttribute("webkit-playsinline", "");
+    ttsAudio.setAttribute("referrerpolicy", "no-referrer");  // 关键：避免音频源防盗链拦截
+  }
+  return ttsAudio;
 }
-// 稳健播放：play() 在用户点击的同步栈中调用（iOS 要求），失败由 error 事件兜底
-function _playAudio(url, rate, onFail){
-  const a = new Audio();
-  a.preload = 'auto';
-  a.playbackRate = rate || 1;
-  let started = false;
-  a.addEventListener('error', (e)=>{
-    if(!started && onFail) onFail();
-  });
-  a.addEventListener('canplay', ()=>{
-    started = true;
-    a.play().catch(()=>{});
-  });
-  a.src = url;
-  a.load();
-  // 立即尝试播放（iOS 需要同步调用）
-  a.play().then(()=>{ started = true; }).catch(()=>{});
+// iOS 只允许用户手势内起播：首次触摸用静音样本打开音频通道
+function unlockAudio(){
+  if(audioReady) return;
+  audioReady = true;
+  try{
+    const a = ensureAudio();
+    a.muted = true;
+    a.src = SILENT_WAV;
+    const p = a.play();
+    if(p && p.catch) p.catch(()=>{});
+    setTimeout(()=>{ try{ a.pause(); a.muted = false; a.removeAttribute("src"); }catch(e){} }, 150);
+  }catch(e){}
 }
+document.addEventListener("pointerdown", unlockAudio, true);
+document.addEventListener("keydown", unlockAudio, true);
+
+// 发音音频地址：单词走有道（真人录音），句子走百度（长文本稳定）
+function ttsUrl(text, alt){
+  const t = (text || "").trim();
+  const isWord = t && !/\s/.test(t);
+  if(isWord) return alt
+    ? "https://fanyi.baidu.com/gettts?lan=en&text=" + encodeURIComponent(t) + "&spd=3&source=web"
+    : "https://dict.youdao.com/dictvoice?type=2&audio=" + encodeURIComponent(t);
+  return alt
+    ? "https://dict.youdao.com/dictvoice?audio=" + encodeURIComponent(t) + "&le=en"
+    : "https://fanyi.baidu.com/gettts?lan=en&text=" + encodeURIComponent(t) + "&spd=3&source=web";
+}
+
+function playAudio(text, btn, opts){
+  opts = opts || {};
+  if(!text){ if(opts.onend) opts.onend(); return; }
+  const a = ensureAudio();
+  let ended = false, alt = !!opts.__alt;
+  const finish = ()=>{ if(ended) return; ended = true; if(opts.onend) opts.onend(); };
+  const fail = ()=>{
+    finish();
+    if(opts.onfail){ opts.onfail(); return; }
+    toast('发音失败，请检查网络');
+  };
+  const load = ()=>{
+    a.onended = finish;
+    a.onerror = ()=>{
+      if(!alt){ alt = true; load(); return; }   // 主源失效换备用源
+      fail();
+    };
+    a.src = ttsUrl(text, alt);
+    a.playbackRate = Math.max(0.6, Math.min(1.6, opts.rate || 1));
+    try{ a.preservesPitch = true; a.webkitPreservesPitch = true; }catch(e){}
+    const pr = a.play();
+    if(pr && pr.catch) pr.catch(err=>{
+      if(err && err.name === "AbortError") return;
+      if(opts.onfail){ fail(); return; }
+      finish();
+    });
+  };
+  try{ a.pause(); }catch(e){}
+  load();
+}
+
 // 播放单词发音
 function speakWord(word){
-  _playAudio(_youdaoUrl(word), 1, ()=>{ toast('发音失败，请检查网络'); });
+  playAudio(word, null, {});
 }
-// 例句发音：播放同源静态音频（预生成，稳定可靠）
+// 例句发音：提取英文部分（去掉中文），整句走百度
 function speakExampleById(word){
   const w = WORDS.find(x=>x.w===word);
   if(!w || !w.e) return;
-  if(!w.ak){
-    toast('这个词没有例句音频');
-    return;
-  }
-  // 用绝对路径（基于当前页面，避免相对路径解析问题）+ 版本号绕过 CDN 缓存
-  const base = location.href.replace(/[^/]*$/, '');
-  const url = base + 'audio/' + w.ak + '.mp3?v=2';
-  const a = new Audio();
-  a.preload = 'auto';
-  let ok = false;
-  let failMsg = '';
-  a.addEventListener('error', (e)=>{
-    const code = a.error ? a.error.code : '';
-    if(!ok){
-      toast('例句加载失败(code=' + code + ')');
-    }
-  });
-  a.addEventListener('canplay', ()=>{ ok = true; a.play().catch(()=>{}); });
-  a.addEventListener('canplaythrough', ()=>{ ok = true; });
-  a.src = url;
-  a.load();
-  const p = a.play();
-  if(p && p.then){ p.then(()=>{ ok=true; }).catch(()=>{}); }
+  const en = enPart(w.e);
+  if(!en){ toast('这个词没有例句音频'); return; }
+  playAudio(en, null, {});
+}
+// 例句字段「英文.中文。」拼接，朗读只取前半段英文
+const CJK_RE = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uff00-\uffef]/;
+function enPart(s){
+  const t = String(s||"").replace(/[\u201c\u201d"]/g,"").trim();
+  const i = t.search(CJK_RE);
+  if(i === 0) return "";
+  return (i > 0 ? t.slice(0,i) : t).trim();
 }
 
 /* ================= 星空背景 ================= */
